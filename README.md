@@ -13,9 +13,9 @@ archive ships with an SPDX SBOM.
 
 **Script** (Linux/macOS): verifies sha256, and the cosign signature when `cosign` is installed.
 ```bash
-curl -fsSL https://get.pgsafe.dev | sh
+curl -fsSL https://raw.githubusercontent.com/desnarong/pgsafe/main/deploy/install/install.sh | sh
 # pin a version / choose the directory (default /usr/local/bin, else ~/.local/bin)
-curl -fsSL https://get.pgsafe.dev | PGSAFE_VERSION=1.2.3 PGSAFE_INSTALL_DIR=$HOME/bin sh
+curl -fsSL https://raw.githubusercontent.com/desnarong/pgsafe/main/deploy/install/install.sh | PGSAFE_VERSION=1.2.3 PGSAFE_INSTALL_DIR=$HOME/bin sh
 ```
 
 **Homebrew**

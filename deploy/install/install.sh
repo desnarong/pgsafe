@@ -1,8 +1,8 @@
 #!/bin/sh
-# pgsafe installer — served at https://get.pgsafe.dev
+# pgsafe installer (served from the public repo: https://raw.githubusercontent.com/desnarong/pgsafe/main/deploy/install/install.sh)
 #
-#   curl -fsSL https://get.pgsafe.dev | sh
-#   curl -fsSL https://get.pgsafe.dev | PGSAFE_VERSION=1.2.3 PGSAFE_INSTALL_DIR=$HOME/bin sh
+#   curl -fsSL https://raw.githubusercontent.com/desnarong/pgsafe/main/deploy/install/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/desnarong/pgsafe/main/deploy/install/install.sh | PGSAFE_VERSION=1.2.3 PGSAFE_INSTALL_DIR=$HOME/bin sh
 #
 # Downloads a release from GitHub (desnarong/pgsafe), verifies its sha256 against
 # checksums.txt, verifies checksums.txt with cosign (keyless) when cosign is installed,
