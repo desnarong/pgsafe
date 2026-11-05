@@ -1,0 +1,105 @@
+# pgsafe dev environment (design doc §8). Dev-only credentials.
+# Start with `make dev-up` (Linux/macOS) or `.\make.ps1 dev-up` (Windows).
+name: pgsafe-dev
+
+x-pg-source: &pg-source
+  environment:
+    POSTGRES_USER: ${PGSAFE_DEV_PG_USER:-pgsafe}
+    POSTGRES_PASSWORD: ${PGSAFE_DEV_PG_PASSWORD:-pgsafe}
+    POSTGRES_DB: shop
+    POSTGRES_INITDB_ARGS: --encoding=UTF8
+  volumes:
+    - ./seed:/docker-entrypoint-initdb.d:ro
+  # -h 127.0.0.1: the entrypoint's init-time server listens on the socket only,
+  # so this turns healthy only after seeding finished and the real server is up.
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d shop"]
+    interval: 2s
+    timeout: 3s
+    retries: 120
+    start_period: 10s
+
+x-pg-empty: &pg-empty
+  image: postgres:16
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER}"]
+    interval: 2s
+    timeout: 3s
+    retries: 60
+
+services:
+  pg-source-14:
+    <<: *pg-source
+    image: postgres:14
+    ports: ["5414:5432"]
+
+  pg-source-16:
+    <<: *pg-source
+    image: postgres:16
+    ports: ["5416:5432"]
+
+  pg-source-18:
+    <<: *pg-source
+    image: postgres:18
+    ports: ["5418:5432"]
+
+  pg-staging:
+    <<: *pg-empty
+    environment:
+      POSTGRES_USER: ${PGSAFE_DEV_PG_USER:-pgsafe}
+      POSTGRES_PASSWORD: ${PGSAFE_DEV_PG_PASSWORD:-pgsafe}
+      POSTGRES_DB: shop_staging
+    ports: ["5433:5432"]
+
+  pg-meta:
+    <<: *pg-empty
+    environment:
+      POSTGRES_USER: ${PGSAFE_DEV_PG_USER:-pgsafe}
+      POSTGRES_PASSWORD: ${PGSAFE_DEV_PG_PASSWORD:-pgsafe}
+      POSTGRES_DB: pgsafe_meta
+    ports: ["5434:5432"]
+
+  # MinIO stopped publishing community images on Docker Hub (minio/minio, minio/mc),
+  # so use Chainguard's MinIO build. It has no shell, so health is checked by
+  # minio-init below. Data lives in the container only (dev-reset wipes it).
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    command: ["server", "/tmp/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${PGSAFE_DEV_MINIO_USER:-pgsafeminio}
+      MINIO_ROOT_PASSWORD: ${PGSAFE_DEV_MINIO_PASSWORD:-pgsafeminio}
+    ports: ["9000:9000", "9001:9001"]
+
+  # Waits for MinIO, creates the dev bucket with the AWS CLI (works against any
+  # S3-compatible backend), then stays up so `up --wait` sees it as healthy.
+  minio-init:
+    image: amazon/aws-cli:2.22.0
+    depends_on: [minio]
+    environment:
+      AWS_ACCESS_KEY_ID: ${PGSAFE_DEV_MINIO_USER:-pgsafeminio}
+      AWS_SECRET_ACCESS_KEY: ${PGSAFE_DEV_MINIO_PASSWORD:-pgsafeminio}
+      AWS_DEFAULT_REGION: us-east-1
+      S3_ENDPOINT: http://minio:9000
+      BUCKET: ${PGSAFE_DEV_BUCKET:-pgsafe-dev}
+    volumes:
+      - ./minio/init.sh:/init.sh:ro
+    entrypoint: ["/bin/sh", "/init.sh"]
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+
+  # SMTP sink for the control plane's emails (magic links, alerts, digests).
+  # UI and API: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.21.8
+    ports: ["1025:1025", "8025:8025"]
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

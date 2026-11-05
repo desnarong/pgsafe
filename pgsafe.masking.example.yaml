@@ -1,0 +1,30 @@
+# pgsafe.masking.yaml — example. `pgsafe scan` writes suggestions with reviewed: false;
+# a person checks each one and sets reviewed: true. Unreviewed likely-PII blocks
+# `pgsafe mask` / `pgsafe stage` with exit code 3 (fail closed).
+version: 1
+tables:
+  public.customers:
+    email:        { strategy: fake_email, reviewed: true }              # user_<hash16>@example.test, same input → same output
+    phone:        { strategy: fake_phone_th, reviewed: true }           # keeps 06/08/09 prefix and +66 form, unique
+    citizen_id:   { strategy: fake_thai_id, reviewed: true }            # valid checksum, unique (format-preserving)
+    full_name:    { strategy: fake_name_th, part: full, reviewed: true }  # นาย/นาง/นางสาว + first + last
+    first_name:   { strategy: fake_name_th, part: first, reviewed: true }
+    last_name:    { strategy: fake_name_th, part: last, reviewed: true }
+    address:      { strategy: fake_address_th, reviewed: true }         # real ตำบล/อำเภอ/จังหวัด + postal code
+    birth_date:   { strategy: date_shift, max_days: 180, reviewed: true }
+    notes:        { strategy: redact, reviewed: true }                  # emails / long digit runs → [REDACTED]
+    preferences:  { strategy: json_mask, keys: { contact_email: fake_email }, reviewed: true }
+    tier:         { strategy: keep, reviewed: true }                    # confirmed not PII
+  public.orders:
+    customer_email:   { strategy: fake_email, reviewed: true }          # joins with customers.email still work
+    shipping_address: { strategy: fake_address_th, reviewed: true }
+    total:            { strategy: number_noise, pct: 5, reviewed: true }
+  public.payments:
+    card_number:  { strategy: fake_card, reviewed: true }               # Luhn-valid, keeps network digit
+    card_last4:   { strategy: static, value: "0000", reviewed: true }
+    payer_ip:     { strategy: fake_ip, reviewed: true }                 # 10.0.0.0/8 or fd00::/8
+  public.sessions:
+    _table:       { strategy: truncate }
+  public.audit_log:
+    actor:        { strategy: hash, reviewed: true }                    # HMAC-SHA256 hex
+    message:      { strategy: sql, expr: "left(message, 20) || '…'", reviewed: true }

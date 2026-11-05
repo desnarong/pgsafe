@@ -1,0 +1,165 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# Release pipeline for the open-source agent (agent/, Apache-2.0). Runs in the public
+# repository github.com/desnarong/pgsafe (published with scripts/publish-oss.sh).
+#
+#   local dry run:  make release-check   (Windows: .\make.ps1 release-check)
+#   real release:   push a tag v*  →  .github/workflows/release.yml
+version: 2
+
+project_name: pgsafe
+
+before:
+  hooks:
+    - go -C agent mod verify
+
+builds:
+  - id: pgsafe
+    dir: agent
+    main: ./cmd/pgsafe
+    binary: pgsafe
+    env:
+      - CGO_ENABLED=0
+      # The agent module is built on its own (replace → ../shared/apitypes), so a
+      # release depends on nothing outside agent/ and shared/apitypes/.
+      - GOWORK=off
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .ShortCommit }}
+    # Reproducible builds: file times come from the commit, not the build machine.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: pgsafe
+    ids: [pgsafe]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: agent/LICENSE
+        dst: LICENSE
+        info: { mtime: "{{ .CommitDate }}" }
+      - src: README.md
+        info: { mtime: "{{ .CommitDate }}" }
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+sboms:
+  - id: archives
+    artifacts: archive # one SPDX SBOM per archive (syft)
+
+# Keyless (Sigstore/Fulcio, GitHub OIDC) signature of checksums.txt → .sig + .pem.
+# Verifying the checksum file transitively covers every archive and package.
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - --yes
+
+nfpms:
+  - id: pgsafe
+    ids: [pgsafe]
+    package_name: pgsafe
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: pgsafe
+    homepage: https://github.com/desnarong/pgsafe
+    maintainer: Desnarong Seejai <desnarong.sm@gmail.com>
+    description: Postgres backups that are restore-tested every time, plus PII-masked staging databases.
+    license: Apache-2.0
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    mtime: "{{ .CommitDate }}"
+    overrides:
+      deb:
+        recommends:
+          - docker-ce-cli | docker.io # verify.runtime: docker (default); rpm has no portable name
+    contents:
+      - src: deploy/systemd/pgsafe.service
+        dst: /usr/lib/systemd/system/pgsafe.service
+        file_info: { mode: 0644, mtime: "{{ .CommitDate }}" }
+      - src: deploy/systemd/pgsafe.env.example
+        dst: /usr/share/doc/pgsafe/pgsafe.env.example
+        file_info: { mode: 0644, mtime: "{{ .CommitDate }}" }
+      - src: pgsafe.example.yaml
+        dst: /usr/share/doc/pgsafe/pgsafe.example.yaml
+        file_info: { mode: 0644, mtime: "{{ .CommitDate }}" }
+      - src: agent/LICENSE
+        dst: /usr/share/doc/pgsafe/LICENSE
+        file_info: { mode: 0644, mtime: "{{ .CommitDate }}" }
+    scripts:
+      postinstall: deploy/nfpm/postinstall.sh
+
+# Homebrew: a cask in desnarong/homebrew-tap (`brews` formulas are deprecated in
+# GoReleaser v2.10+). The binary is not notarized, so the quarantine bit is cleared.
+homebrew_casks:
+  - name: pgsafe
+    ids: [pgsafe]
+    binaries: [pgsafe]
+    homepage: https://github.com/desnarong/pgsafe
+    description: Restore-tested Postgres backups and PII-masked staging
+    license: Apache-2.0
+    directory: Casks
+    commit_author:
+      name: pgsafe-release-bot
+      email: noreply@pgsafe.dev
+    repository:
+      owner: desnarong
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    hooks:
+      post:
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/pgsafe"]
+          end
+
+# Multi-arch agent image (buildx). The binary comes from the build above;
+# the image adds PostgreSQL clients 14–18 and the docker CLI.
+dockers_v2:
+  - id: pgsafe
+    ids: [pgsafe]
+    dockerfile: deploy/docker/Dockerfile.agent
+    images: [ghcr.io/desnarong/pgsafe]
+    tags: ["{{ .Version }}", latest]
+    platforms: [linux/amd64, linux/arm64]
+    labels:
+      org.opencontainers.image.title: pgsafe
+      org.opencontainers.image.description: Restore-tested Postgres backups and PII-masked staging (agent)
+      org.opencontainers.image.source: https://github.com/desnarong/pgsafe
+      org.opencontainers.image.licenses: Apache-2.0
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .CommitDate }}"
+
+docker_signs:
+  - id: images
+    cmd: cosign
+    artifacts: manifests
+    args: [sign, "${artifact}@${digest}", --yes]
+
+release:
+  github:
+    owner: desnarong
+    name: pgsafe
+  draft: false
+  prerelease: auto
+  footer: |
+    Verify: `cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.sig
+    --certificate-identity-regexp '^https://github.com/desnarong/pgsafe/' --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt`
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:"]
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"

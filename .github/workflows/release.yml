@@ -1,0 +1,53 @@
+# Release the open-source agent: binaries, deb/rpm, SBOMs, Homebrew cask, multi-arch
+# image on GHCR — all signed keyless with cosign (GitHub OIDC). Config: .goreleaser.yaml
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # GitHub release + assets
+  packages: write # ghcr.io/desnarong/pgsafe
+  id-token: write # cosign keyless (Fulcio certificate from the OIDC token)
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0 # changelog + version from tags
+
+      - uses: actions/setup-go@v5.5.0
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+
+      - uses: docker/setup-qemu-action@v3.6.0
+      - uses: docker/setup-buildx-action@v3.11.1
+
+      - uses: docker/login-action@v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@v3.9.2
+        with:
+          cosign-release: v2.5.3 # .sig + .pem output (cosign v3 defaults to bundles)
+
+      - uses: anchore/sbom-action/download-syft@v0.20.4
+
+      - uses: goreleaser/goreleaser-action@v6.3.0
+        with:
+          distribution: goreleaser
+          version: v2.19.0 # keep in sync with GORELEASER_IMAGE in Makefile / make.ps1
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

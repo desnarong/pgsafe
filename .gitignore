@@ -1,0 +1,30 @@
+# Build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Local config & secrets
+.env
+*.local.yaml
+keys/
+*.age
+*.key
+
+# Local preview config (holds a dev-only encryption key)
+.claude/launch.json
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Web (Phase 5)
+node_modules/
+web/dist/
+
+# pgsafe local state (run history)
+.pgsafe/

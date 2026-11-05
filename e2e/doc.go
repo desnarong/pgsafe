@@ -1,0 +1,3 @@
+// Package e2e holds integration tests that run against deploy/compose.dev.yml.
+// Run with: go test -tags e2e ./e2e/...
+package e2e

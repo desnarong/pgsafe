@@ -1,0 +1,37 @@
+# pgsafe agent image (Apache-2.0). Built by GoReleaser (dockers_v2): the build
+# context holds the prebuilt binary at linux/<arch>/pgsafe — nothing is compiled here.
+#
+#   docker run --rm -v "$PWD:/work" -w /work --env-file pgsafe.env \
+#     -v /var/run/docker.sock:/var/run/docker.sock --group-add "$(stat -c %g /var/run/docker.sock)" \
+#     ghcr.io/desnarong/pgsafe:latest verify
+#
+# verify.runtime: docker needs the host docker.sock (as above); without it use
+# verify.runtime: server. PostgreSQL clients 14–18 live in /usr/lib/postgresql/<N>/bin,
+# which is where `pg_client: auto` looks first.
+FROM debian:bookworm-slim
+
+ARG TARGETPLATFORM
+ARG PG_MAJORS="14 15 16 17 18"
+
+SHELL ["/bin/sh", "-eux", "-c"]
+RUN apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
+    install -d -m 0755 /etc/apt/keyrings; \
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/keyrings/pgdg.gpg; \
+    echo "deb [signed-by=/etc/apt/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list; \
+    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list; \
+    apt-get update; \
+    pkgs=""; for v in $PG_MAJORS; do pkgs="$pkgs postgresql-client-$v"; done; \
+    apt-get install -y --no-install-recommends $pkgs docker-ce-cli; \
+    apt-get purge -y --auto-remove curl gnupg; \
+    rm -rf /var/lib/apt/lists/*; \
+    for v in $PG_MAJORS; do /usr/lib/postgresql/$v/bin/pg_dump --version; done; \
+    useradd --system --uid 65532 --user-group --home-dir /home/pgsafe --create-home --shell /usr/sbin/nologin pgsafe
+
+COPY ${TARGETPLATFORM}/pgsafe /usr/local/bin/pgsafe
+
+USER 65532:65532
+WORKDIR /home/pgsafe
+ENTRYPOINT ["pgsafe"]
+CMD ["--help"]

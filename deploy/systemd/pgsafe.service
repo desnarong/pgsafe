@@ -1,0 +1,43 @@
+# pgsafe agent as a systemd service (Linux VPS).
+#   sudo useradd --system --home /var/lib/pgsafe --create-home pgsafe
+#   sudo usermod -aG docker pgsafe            # only for verify.runtime: docker
+#   sudo install -m 0755 pgsafe /usr/local/bin/pgsafe
+#   sudo install -d -o pgsafe -m 0700 /etc/pgsafe
+#   sudo install -o pgsafe -m 0600 pgsafe.yaml pgsafe.masking.yaml /etc/pgsafe/
+#   sudo install -o pgsafe -m 0600 pgsafe.env.example /etc/pgsafe/pgsafe.env   # then edit secrets
+#   sudo cp pgsafe.service /etc/systemd/system/ && sudo systemctl enable --now pgsafe
+#   journalctl -u pgsafe -f
+[Unit]
+Description=pgsafe agent: restore-tested Postgres backups and masked staging
+Documentation=https://github.com/desnarong/pgsafe
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+User=pgsafe
+Group=pgsafe
+WorkingDirectory=/var/lib/pgsafe
+# Secrets (DATABASE_URL, AWS_*, PGSAFE_MASK_SALT, ...) live only here, mode 0600.
+EnvironmentFile=/etc/pgsafe/pgsafe.env
+# No absolute path: systemd (239+) finds pgsafe in /usr/local/bin (install.sh) or /usr/bin (deb/rpm).
+ExecStart=pgsafe run --config /etc/pgsafe/pgsafe.yaml --log-format json
+# SIGTERM stops gracefully: running jobs are cancelled and their scratch databases removed.
+KillSignal=SIGTERM
+TimeoutStopSec=300
+Restart=on-failure
+RestartSec=30
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/pgsafe /etc/pgsafe
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

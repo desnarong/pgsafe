@@ -1,0 +1,74 @@
+# pgsafe.yaml — example (backup, verify, scan, mask, stage, pull). Copy to pgsafe.yaml or run `pgsafe init`.
+# Credentials are read from env only; pgsafe refuses URLs with a password written here.
+version: 1
+state_dir: .pgsafe          # local run history (list runs)
+pg_client: auto             # where pg_dump/pg_restore come from: auto | local | docker
+
+databases:
+  - name: app-prod
+    url: ${PROD_DATABASE_URL}
+    exclude_tables: [audit_raw_logs]        # not dumped at all
+    exclude_table_data: [sessions, cache_*] # schema only
+
+storage:
+  type: s3
+  bucket: acme-pg-backups
+  prefix: app-prod/
+  region: ap-southeast-1
+  endpoint: ""                # set for R2 / B2 / MinIO
+  # credentials: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, shared config or IAM role
+
+encryption:
+  type: age                   # age (recommended) | none
+  recipients_file: ./keys/backup.pub
+  identity_file: ${PGSAFE_AGE_IDENTITY_FILE}   # private key; only where you verify/restore
+
+retention:                    # newest per day/ISO week/month; backups < 24h old are always kept
+  daily: 7
+  weekly: 4
+  monthly: 6
+
+schedule:                     # used by `pgsafe run`
+  backup: "0 2 * * *"         # cron (local time) or "@every 6h"
+  verify: after_backup        # after_backup | cron | off
+  stage: after_verify         # after_verify (only if verify passed) | cron | off
+
+verify:
+  runtime: docker             # docker | server
+  # server_url: ${SCRATCH_DATABASE_URL}   # runtime: server — never a production server
+  # jobs: 4                   # pg_restore --jobs (default min(4, CPUs))
+  # docker_image: "postgres:{major}"
+  row_count:
+    exact_below_rows: 5_000_000
+    estimate_tolerance_pct: 2
+  checks:
+    - type: sql
+      name: has_recent_orders
+      query: "select count(*) > 0 from orders where created_at > now() - interval '2 days'"
+
+masking:
+  rules_file: ./pgsafe.masking.yaml   # see pgsafe.masking.example.yaml
+  salt: ${PGSAFE_MASK_SALT}           # >= 16 chars, stays on your machines (openssl rand -hex 32)
+  on_unreviewed_pii: block            # block (exit 3) | mask_default | warn
+  scan_on: scratch                    # scratch (restored backup) | source (read-only sample)
+  large_table_rows: 1_000_000         # above this: CTAS path instead of UPDATE
+  post_check_sample: 1000
+  # jobs: 4
+
+staging:
+  encryption:                         # key for the dev team — never the backup key
+    type: age
+    recipients_file: ./keys/dev.pub
+    identity_file: ${PGSAFE_STAGING_IDENTITY_FILE}
+  targets:
+    - type: database
+      url: ${STAGING_DATABASE_URL}
+      mode: replace                   # new DB → restore → rename swap (seconds of downtime)
+      preserve_tables: [feature_flags]
+    - type: s3                        # devs: pgsafe pull --staging --to postgres://localhost/app_dev
+      prefix: masked/
+
+notify:                       # webhooks called by `pgsafe run` (metadata only)
+  - type: webhook
+    url: ${ALERT_WEBHOOK_URL}
+    on: [failure, blocked]    # failure | blocked | success
